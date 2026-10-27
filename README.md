@@ -1,4 +1,3 @@
-![Uploading изображение.png…]()
 <h1>AEGIS // Modular Host XDR & Active Defense Platform</h1>
 
 <p>

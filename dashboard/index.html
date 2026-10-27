@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AEGIS // Advanced Host-Level XDR Platform</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <style>
+        :root {
+            --bg-base: #06080a;
+            --bg-surface: #0d1117;
+            --bg-elevated: #161b22;
+            --border: #30363d;
+            --text-primary: #f0f6fc;
+            --text-secondary: #8b949e;
+            --accent-cyan: #00f0ff;
+            --accent-green: #2ea44f;
+            --accent-red: #f85149;
+            --accent-yellow: #d29922;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', monospace; }
+        body { background-color: var(--bg-base); color: var(--text-primary); display: flex; height: 100vh; overflow: hidden; }
+        #sidebar { width: 240px; background: var(--bg-surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+        .brand { padding: 20px; font-size: 18px; font-weight: 800; letter-spacing: 2px; color: var(--accent-cyan); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+        .nav-list { list-style: none; padding: 15px 0; flex-grow: 1; }
+        .nav-item { padding: 12px 20px; cursor: pointer; display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-secondary); transition: 0.2s; }
+        .nav-item:hover, .nav-item.active { background: var(--bg-elevated); color: var(--accent-cyan); border-left: 3px solid var(--accent-cyan); }
+        .status-pill { padding: 15px 20px; border-top: 1px solid var(--border); font-size: 11px; display: flex; justify-content: space-between; color: var(--text-secondary); }
+        .status-online { color: var(--accent-green); font-weight: bold; }
+        #main-view { flex-grow: 1; display: flex; flex-direction: column; overflow: hidden; }
+        header { height: 60px; background: var(--bg-surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 30px; }
+        .view-title { font-size: 14px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; color: var(--text-primary); }
+        .top-stats { display: flex; gap: 20px; font-size: 12px; }
+        .stat-item { display: flex; gap: 6px; }
+        .stat-val { font-weight: bold; color: var(--accent-cyan); }
+        .content-area { flex-grow: 1; padding: 25px; overflow-y: auto; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; height: 100%; }
+        .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 25px; }
+        .card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 6px; padding: 20px; }
+        .card-title { font-size: 11px; text-transform: uppercase; color: var(--text-secondary); letter-spacing: 1px; margin-bottom: 8px; }
+        .card-val { font-size: 26px; font-weight: bold; }
+        .threat-alert { border-color: var(--accent-red) !important; color: var(--accent-red); }
+        .data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .data-table th, .data-table td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border); }
+        .data-table th { background: var(--bg-elevated); color: var(--text-secondary); text-transform: uppercase; font-size: 11px; }
+        .badge { padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: bold; }
+        .badge-safe { background: rgba(46, 164, 79, 0.2); color: var(--accent-green); border: 1px solid var(--accent-green); }
+        .badge-crit { background: rgba(248, 81, 73, 0.2); color: var(--accent-red); border: 1px solid var(--accent-red); }
+        .badge-warn { background: rgba(210, 153, 34, 0.2); color: var(--accent-yellow); border: 1px solid var(--accent-yellow); }
+        .btn { background: var(--bg-elevated); color: var(--text-primary); border: 1px solid var(--border); padding: 6px 12px; font-size: 11px; font-weight: bold; border-radius: 4px; cursor: pointer; transition: 0.2s; }
+        .btn:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
+        .btn-danger { border-color: var(--accent-red); color: var(--accent-red); }
+        .btn-danger:hover { background: var(--accent-red); color: #fff; }
+        #map-container { width: 100%; height: 500px; border: 1px solid var(--border); border-radius: 6px; }
+        .console-feed { background: #000; border: 1px solid var(--border); border-radius: 6px; padding: 15px; font-size: 11px; height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+        .log-row { display: flex; gap: 10px; }
+        .log-ts { color: var(--text-secondary); }
+        .toast-box { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; }
+        .toast { background: var(--bg-elevated); border-left: 4px solid var(--accent-red); padding: 15px 20px; border-radius: 4px; font-size: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
+    </style>
+</head>
+<body>
+    <aside id="sidebar">
+        <div class="brand">🛡️ AEGIS XDR</div>
+        <ul class="nav-list">
+            <li class="nav-item active" onclick="switchTab('overview')">Threat Radar</li>
+            <li class="nav-item" onclick="switchTab('processes')">Process Guard</li>
+            <li class="nav-item" onclick="switchTab('deception')">Deception & Traps</li>
+            <li class="nav-item" onclick="switchTab('network')">Network Topography</li>
+            <li class="nav-item" onclick="switchTab('lan')">LAN Discovery</li>
+            <li class="nav-item" onclick="switchTab('usb')">Hardware Access</li>
+        </ul>
+        <div class="status-pill">
+            <span>CORE STATUS</span>
+            <span class="status-online">ACTIVE</span>
+        </div>
+    </aside>
+
+    <main id="main-view">
+        <header>
+            <div class="view-title" id="page-title">Threat Radar // Live Telemetry</div>
+            <div class="top-stats">
+                <div class="stat-item">GLOBAL SCORE: <span class="stat-val" id="global-score">0</span></div>
+                <div class="stat-item">MITIGATIONS: <span class="stat-val" id="mitigation-count">0</span></div>
+                <div class="stat-item">BLOCKED IPS: <span class="stat-val" id="blocked-ips-count">0</span></div>
+            </div>
+        </header>
+
+        <section class="content-area">
+            <div id="tab-overview" class="tab-content active">
+                <div class="card-grid">
+                    <div class="card" id="card-threat-level">
+                        <div class="card-title">Threat Level</div>
+                        <div class="card-val" id="val-threat-level">NOMINAL</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Quarantined Binaries</div>
+                        <div class="card-val" id="val-quarantine-count">0</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Active Decoys</div>
+                        <div class="card-val">9 Armed</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Honeypot Traps</div>
+                        <div class="card-val">4 Active</div>
+                    </div>
+                </div>
+                <div class="card" style="margin-bottom: 25px;">
+                    <div class="card-title">Real-Time Event Stream</div>
+                    <div class="console-feed" id="event-feed"></div>
+                </div>
+            </div>
+
+            <div id="tab-processes" class="tab-content">
+                <div class="card">
+                    <div class="card-title">Monitored Process Space</div>
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>PID</th>
+                                <th>Process Name</th>
+                                <th>Score</th>
+                                <th>Risk</th>
+                                <th>Triggered Events</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="process-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="tab-deception" class="tab-content">
+                <div class="card-grid">
+                    <div class="card">
+                        <div class="card-title">Filesystem Canaries</div>
+                        <table class="data-table">
+                            <thead>
+                                <tr><th>Path</th><th>Integrity</th><th>Entropy</th></tr>
+                            </thead>
+                            <tbody id="canary-table-body"></tbody>
+                        </table>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Honeypot Intrusions</div>
+                        <table class="data-table">
+                            <thead>
+                                <tr><th>Attacker IP</th><th>Port</th><th>Payload</th><th>Action</th></tr>
+                            </thead>
+                            <tbody id="honeypot-table-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab-network" class="tab-content">
+                <div id="map-container"></div>
+            </div>
+
+            <div id="tab-lan" class="tab-content">
+                <div class="card" style="margin-bottom: 20px;">
+                    <button class="btn" onclick="startLanScan()">Scan Local Subnet (/24)</button>
+                </div>
+                <div class="card">
+                    <div class="card-title">Discovered Nodes</div>
+                    <table class="data-table">
+                        <thead>
+                            <tr><th>IP</th><th>MAC</th><th>Hostname</th><th>Vendor</th><th>Status</th></tr>
+                        </thead>
+                        <tbody id="lan-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="tab-usb" class="tab-content">
+                <div class="card">
+                    <div class="card-title">Hardware Access Ledger</div>
+                    <table class="data-table">
+                        <thead>
+                            <tr><th>Device Serial</th><th>Name</th><th>Connected</th><th>Policy</th><th>Action</th></tr>
+                        </thead>
+                        <tbody id="usb-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div class="toast-box" id="toast-box"></div>
+    <script src="/app.js"></script>
+</body>
+</html>

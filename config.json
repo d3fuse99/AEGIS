@@ -1,0 +1,74 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8080
+  },
+  "threat_engine": {
+    "global_threshold": 100,
+    "decay_rate": 5,
+    "decay_interval_sec": 3.0
+  },
+  "sensors": {
+    "behavior": {
+      "enabled": true,
+      "interval_sec": 1.5,
+      "points_temp_dir": 40,
+      "points_suspicious_path": 35,
+      "points_established_net": 25,
+      "points_sustained_cpu": 20,
+      "points_suspicious_parent": 50,
+      "points_known_bad_hash": 100,
+      "points_registry_persistence": 40,
+      "points_ransomware_behavior": 100,
+      "points_memory_signature": 90,
+      "safelist": [
+        "idle", "system", "registry", "smss.exe", "csrss.exe", "wininit.exe",
+        "services.exe", "lsass.exe", "svchost.exe", "explorer.exe",
+        "spoolsv.exe", "taskhostw.exe", "conhost.exe", "python.exe", "python",
+        "init", "systemd", "dockerd", "bash", "zsh", "ssh", "sshd"
+      ],
+      "known_bad_hashes": [
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ]
+    },
+    "canary": {
+      "enabled": true,
+      "interval_sec": 0.05,
+      "entropy_threshold": 7.2,
+      "decoys": [
+        "_critical_ledger.docx",
+        "00_database_backup.db",
+        "0_auth_vault.txt"
+      ]
+    },
+    "deception": {
+      "enabled": true,
+      "threat_limit": 10,
+      "ports": {
+        "21": "FTP",
+        "22": "SSH",
+        "80": "HTTP",
+        "3306": "MySQL"
+      }
+    },
+    "net": {
+      "enabled": true,
+      "refresh_interval_sec": 5,
+      "dnsbl_list": [
+        "bl.spamcop.net",
+        "dnsbl.sorbs.net",
+        "zen.spamhaus.org"
+      ]
+    },
+    "usb": {
+      "enabled": true,
+      "interval_sec": 2.0,
+      "mitigation_enabled": true
+    }
+  },
+  "quarantine": {
+    "directory": "EDR_Quarantine",
+    "max_size_mb": 100,
+    "xor_key": 90
+  }
+}

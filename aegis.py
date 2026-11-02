@@ -6,7 +6,7 @@ import ctypes
 import threading
 import webbrowser
 from core.database import init_db
-from core.engine import CorrelationEngine
+from core.engine import CorrelationEngine, set_global_engine
 from sensors.behavior_sensor import start_behavior_sensor
 from sensors.canary_sensor import start_canary_sensor
 from sensors.deception_sensor import start_deception_sensor
@@ -24,49 +24,27 @@ def check_admin():
     except Exception:
         return False
 
+def request_elevation():
+    if sys.platform == "win32":
+        try:
+            script_path = os.path.abspath(sys.argv[0])
+            params = " ".join([f'"{arg}"' for arg in sys.argv[1:]])
+            ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, f'"{script_path}" {params}', None, 1)
+            if ret > 32:
+                sys.exit(0)
+        except Exception:
+            pass
+
 def load_config():
     if not os.path.exists(CONFIG_FILE):
         sys.exit(1)
     with open(CONFIG_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 
-def print_banner(is_elevated, host, port):
-    cyan = "\033[96m"
-    green = "\033[92m"
-    yellow = "\033[93m"
-    red = "\033[91m"
-    bold = "\033[1m"
-    reset = "\033[0m"
-
-    if sys.platform == "win32":
-        try:
-            k32 = ctypes.windll.kernel32
-            handle = k32.GetStdHandle(-11)
-            mode = ctypes.c_ulong()
-            k32.GetConsoleMode(handle, ctypes.byref(mode))
-            k32.SetConsoleMode(handle, mode.value | 0x0004)
-        except Exception:
-            pass
-
-    print(f"\033[H\033[2J{cyan}{bold}")
-    print("    ___    ______ _____ ____ _____")
-    print("   /   |  / ____// ___//  _// ___/")
-    print("  / /| | / __/  / / __ / /  \\__ \\ ")
-    print(" / ___ |/ /___ / /_/ // /  ___/ / ")
-    print("/_/  |_/_____/ \\____/___/ /____/  ")
-    print(f"{reset}")
-    print(f"{bold} [ AEGIS // ADVANCED MODULAR HOST XDR PLATFORM ]{reset}\n")
-    
-    priv_str = f"{green}ELEVATED (ADMIN){reset}" if is_elevated else f"{red}LIMITED (USER){reset}"
-    print(f" [*] System Privilege Level : {priv_str}")
-    print(f" [*] Telemetry Engine       : {green}ONLINE{reset}")
-    print(f" [*] Local Operations Port  : {yellow}http://{host}:{port}{reset}")
-    print(f" [*] Quarantine Subsystem   : {green}ARMED{reset}")
-    print(f" [*] Peripheral Firewall    : {green}ACTIVE{reset}\n")
-    if not is_elevated:
-        print(f"{yellow} [!] Warning: Running with standard rights. Kernel mitigations and PnP hardware drops will be restricted.{reset}\n")
-
 def main():
+    if not check_admin():
+        request_elevation()
+
     is_elevated = check_admin()
     config = load_config()
 
@@ -76,9 +54,8 @@ def main():
     host = srv_cfg.get("host", "127.0.0.1")
     port = srv_cfg.get("port", 8080)
 
-    print_banner(is_elevated, host, port)
-
     engine = CorrelationEngine(config)
+    set_global_engine(engine)
     engine.start()
 
     start_behavior_sensor(config)
@@ -98,7 +75,6 @@ def main():
             time.sleep(1)
     except KeyboardInterrupt:
         engine.stop()
-        print("\n\033[93m[*] AEGIS core successfully disarmed.\033[0m")
         sys.exit(0)
 
 if __name__ == "__main__":

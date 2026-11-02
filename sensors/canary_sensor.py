@@ -7,6 +7,7 @@ import psutil
 from core.event_bus import bus
 
 file_states = {}
+_PROCESS_IO_SNAPSHOT = {}
 
 def calculate_shannon_entropy(path):
     try:
@@ -52,17 +53,20 @@ def get_decoy_paths(decoy_names):
             paths.append(os.path.join(d, name))
     return paths
 
-def find_responsible_process(target_path):
-    target_lower = target_path.lower()
-    procs = []
-    for p in psutil.process_iter(["pid", "name", "exe", "create_time"]):
+def update_io_baseline():
+    global _PROCESS_IO_SNAPSHOT
+    curr = {}
+    for p in psutil.process_iter(["pid"]):
         try:
-            procs.append(p)
+            curr[p.pid] = p.io_counters().write_bytes
         except Exception:
             pass
-    procs.sort(key=lambda x: x.info.get("create_time", 0), reverse=True)
+    _PROCESS_IO_SNAPSHOT = curr
 
-    for p in procs:
+def find_responsible_process(target_path):
+    target_lower = target_path.lower()
+    
+    for p in psutil.process_iter(["pid", "name", "exe"]):
         try:
             for f in p.open_files():
                 if target_lower in f.path.lower():
@@ -70,13 +74,23 @@ def find_responsible_process(target_path):
         except Exception:
             pass
 
-    for p in procs:
+    candidates = []
+    for p in psutil.process_iter(["pid", "name", "exe", "create_time"]):
         try:
-            exe = p.info.get("exe")
-            if exe and target_lower in exe.lower():
-                return p
+            if p.pid in _PROCESS_IO_SNAPSHOT:
+                delta = p.io_counters().write_bytes - _PROCESS_IO_SNAPSHOT[p.pid]
+                if delta > 1024:
+                    exe = (p.info.get("exe") or "").lower()
+                    win_dir = os.environ.get("SystemRoot", "c:\\windows").lower()
+                    if not exe.startswith(win_dir) and not "python" in p.info.get("name", "").lower():
+                        candidates.append((p, delta))
         except Exception:
             pass
+            
+    if candidates:
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        return candidates[0][0]
+
     return None
 
 def run_canary_loop(config):
@@ -94,8 +108,15 @@ def run_canary_loop(config):
             "exists": os.path.exists(p)
         }
 
+    last_io_sync = time.time()
+    update_io_baseline()
+
     while True:
         time.sleep(interval)
+        if time.time() - last_io_sync > 1.0:
+            update_io_baseline()
+            last_io_sync = time.time()
+
         for path in decoy_paths:
             exists = os.path.exists(path)
             prev = file_states.get(path)

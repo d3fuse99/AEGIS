@@ -3,6 +3,13 @@ import threading
 import urllib.parse
 from core.event_bus import bus
 
+BOUND_PORTS = set()
+_LOCK = threading.Lock()
+
+def get_active_bound_ports():
+    with _LOCK:
+        return list(BOUND_PORTS)
+
 def handle_ssh(client_sock, ip):
     try:
         client_sock.sendall(b"SSH-2.0-OpenSSH_8.2p1 Ubuntu-4ubuntu0.5\r\n")
@@ -65,6 +72,8 @@ def listener_worker(port, service):
     try:
         srv.bind(("0.0.0.0", port))
         srv.listen(64)
+        with _LOCK:
+            BOUND_PORTS.add(port)
     except Exception:
         return
 

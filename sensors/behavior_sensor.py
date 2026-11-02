@@ -8,7 +8,8 @@ import psutil
 from core.event_bus import bus
 
 _HASH_CACHE = {}
-_CPU_HISTORY = {}
+_PROCESS_TRIGGERED_HEURISTICS = {}
+_LOCK = threading.Lock()
 
 KNOWN_NETWORK_APPS = {
     "firefox.exe", "chrome.exe", "msedge.exe", "opera.exe", "brave.exe",
@@ -129,29 +130,46 @@ def check_process(proc, autorun_paths, config):
         if pid in {0, 1, 4, my_pid} or name in config["safelist"]:
             return
 
+        with _LOCK:
+            if pid not in _PROCESS_TRIGGERED_HEURISTICS:
+                _PROCESS_TRIGGERED_HEURISTICS[pid] = set()
+            triggered = _PROCESS_TRIGGERED_HEURISTICS[pid]
+
         exe = ""
         try:
             exe = proc.exe().lower()
         except Exception:
             pass
 
+        def fire_heuristic(heuristic_name, pts):
+            if heuristic_name not in triggered:
+                with _LOCK:
+                    triggered.add(heuristic_name)
+                bus.publish("PROCESS_SUSPICIOUS", {
+                    "pid": pid,
+                    "name": name,
+                    "exe": exe,
+                    "points": pts,
+                    "heuristic": heuristic_name
+                })
+
         if exe:
             temp_dirs = ["\\temp\\", "/tmp/", "\\appdata\\local\\temp\\", "\\appdata\\roaming\\"]
             if any(d in exe for d in temp_dirs):
-                bus.publish("PROCESS_SUSPICIOUS", {"pid": pid, "name": name, "exe": exe, "points": config["points_temp_dir"], "heuristic": "TEMP_DIR_EXEC_PATH"})
+                fire_heuristic("TEMP_DIR_EXEC_PATH", config["points_temp_dir"])
 
             evasion = [r"\.exe\.exe$", r"\.pdf\.exe$", r"\.xlsx\.exe$", r"\\recycler\\", r"\\\$recycle\.bin\\"]
             if any(re.search(pat, exe) for pat in evasion):
-                bus.publish("PROCESS_SUSPICIOUS", {"pid": pid, "name": name, "exe": exe, "points": config["points_suspicious_path"], "heuristic": "EVASION_PATH_PATTERN"})
+                fire_heuristic("EVASION_PATH_PATTERN", config["points_suspicious_path"])
 
             f_hash = get_file_hash(exe)
             if f_hash and f_hash in config["known_bad_hashes"]:
-                bus.publish("PROCESS_SUSPICIOUS", {"pid": pid, "name": name, "exe": exe, "points": config["points_known_bad_hash"], "heuristic": "KNOWN_MALICIOUS_HASH"})
+                fire_heuristic("KNOWN_MALICIOUS_HASH", config["points_known_bad_hash"])
 
             if not is_trusted_directory(exe):
                 for path_entry in autorun_paths:
                     if exe in path_entry:
-                        bus.publish("PROCESS_SUSPICIOUS", {"pid": pid, "name": name, "exe": exe, "points": config["points_registry_persistence"], "heuristic": "REGISTRY_PERSISTENCE"})
+                        fire_heuristic("REGISTRY_PERSISTENCE", config["points_registry_persistence"])
                         break
 
         try:
@@ -161,7 +179,7 @@ def check_process(proc, autorun_paths, config):
                 bad_parents = ["chrome.exe", "msword.exe", "excel.exe", "powerpnt.exe", "outlook.exe"]
                 bad_children = ["cmd.exe", "powershell.exe", "pwsh.exe", "wscript.exe", "cscript.exe", "certutil.exe"]
                 if p_name in bad_parents and name in bad_children:
-                    bus.publish("PROCESS_SUSPICIOUS", {"pid": pid, "name": name, "exe": exe, "points": config["points_suspicious_parent"], "heuristic": "SUSPICIOUS_PARENT_CHILD"})
+                    fire_heuristic("SUSPICIOUS_PARENT_CHILD", config["points_suspicious_parent"])
         except Exception:
             pass
 
@@ -169,14 +187,14 @@ def check_process(proc, autorun_paths, config):
             cmd = " ".join([arg.lower() for arg in proc.cmdline()])
             if cmd:
                 if any(x in cmd for x in ["vssadmin delete shadows", "bcdedit /set recoveryenabled no", "wbadmin delete catalog"]):
-                    bus.publish("PROCESS_SUSPICIOUS", {"pid": pid, "name": name, "exe": exe, "points": config["points_ransomware_behavior"], "heuristic": "RANSOMWARE_INHIBIT_RECOVERY"})
+                    fire_heuristic("RANSOMWARE_INHIBIT_RECOVERY", config["points_ransomware_behavior"])
                 if name in ["certutil.exe", "bitsadmin.exe", "mshta.exe"] and ("http://" in cmd or "https://" in cmd):
-                    bus.publish("PROCESS_SUSPICIOUS", {"pid": pid, "name": name, "exe": exe, "points": config["points_suspicious_parent"], "heuristic": "SUSPICIOUS_LOLBIN_EXECUTION"})
+                    fire_heuristic("SUSPICIOUS_LOLBIN_EXECUTION", config["points_suspicious_parent"])
         except Exception:
             pass
 
         if scan_process_memory(proc):
-            bus.publish("PROCESS_SUSPICIOUS", {"pid": pid, "name": name, "exe": exe, "points": config["points_memory_signature"], "heuristic": "MALICIOUS_MEMORY_SIGNATURE"})
+            fire_heuristic("MALICIOUS_MEMORY_SIGNATURE", config["points_memory_signature"])
 
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         pass
@@ -186,8 +204,19 @@ def run_behavior_loop(config):
     interval = cfg.get("interval_sec", 1.5)
     while True:
         autorun_paths = get_registry_autorun_paths()
+        active_pids = set()
         for proc in psutil.process_iter(attrs=["pid", "name"]):
-            check_process(proc, autorun_paths, cfg)
+            try:
+                active_pids.add(proc.info["pid"])
+                check_process(proc, autorun_paths, cfg)
+            except Exception:
+                pass
+        
+        with _LOCK:
+            stale_pids = [p for p in _PROCESS_TRIGGERED_HEURISTICS if p not in active_pids]
+            for p in stale_pids:
+                del _PROCESS_TRIGGERED_HEURISTICS[p]
+                
         time.sleep(interval)
 
 def start_behavior_sensor(config):

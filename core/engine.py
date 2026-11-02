@@ -5,6 +5,16 @@ from core.database import log_event, is_process_whitelisted
 from mitigation.process_killer import kill_process_tree
 from mitigation.firewall_blocker import block_remote_ip
 
+_GLOBAL_ENGINE = None
+
+def set_global_engine(engine_instance):
+    global _GLOBAL_ENGINE
+    _GLOBAL_ENGINE = engine_instance
+
+def get_global_engine():
+    global _GLOBAL_ENGINE
+    return _GLOBAL_ENGINE
+
 class CorrelationEngine:
     def __init__(self, config):
         self.config = config
@@ -28,6 +38,10 @@ class CorrelationEngine:
 
     def stop(self):
         self.running = False
+
+    def get_process_scores_snapshot(self):
+        with self.lock:
+            return {pid: meta["score"] for pid, meta in self.process_scores.items()}
 
     def _decay_loop(self):
         while self.running:
